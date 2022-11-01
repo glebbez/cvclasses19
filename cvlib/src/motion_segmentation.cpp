@@ -33,12 +33,7 @@ void motion_segmentation::apply(cv::InputArray _image, cv::OutputArray _fgmask, 
         mDiff = cv::Mat::zeros(image.size(), CV_8UC1);
         mPrevFrame = cv::Mat::zeros(image.size(), CV_8UC1);
     }
-    else if (mCounter == 1)
-    {
-        mMax = (mMax.clone() + mMin.clone()) / 2;
-        mMin = mMax.clone();
-        mDiff = cv::Mat::zeros(image.size(), CV_8UC1);
-    }
+    
 
     mMu = 0;
     cv::Mat fgmask = cv::Mat::zeros(image.size(), CV_8UC1);
