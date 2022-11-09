@@ -7,13 +7,12 @@
 #include "cvlib.hpp"
 #include <cstring>
 #include <cstdlib>
+#include <vector>
 
 namespace
 {
-/* Данная функция в текущем варианте решения не используется
-*  Она написана для дальнейшей реализации более высокоэффективного метода, которым я займусь позднее)
-*/
-void area_by_index(int index, cv::Mat image, cv::Mat roi)
+std::vector<int> gIndeces;
+void area_by_index(int index, cv::Mat &image, cv::Mat &roi)
 {
     const auto width = image.cols;
     const auto height = image.rows;
@@ -43,12 +42,12 @@ void area_by_index(int index, cv::Mat image, cv::Mat roi)
         step_w /= 2;
         step_h /= 2;
     }
+    //std::cout << "coords " << x << " " << y << std::endl;
+    //std::cout << "size " << w << " " << h << std::endl;
 
-    roi = image(cv::Range(y, y + h), cv::Range(x, x + w));
+    roi = image(cv::Range(y, y + h), cv::Range(x, x + w)).clone();
 }
-/* Данная функция в текущем варианте решения не используется
- *  Она написана для дальнейшей реализации более высокоэффективного метода, которым я займусь позднее)
- */
+
 bool neighbour_indeces(int index1, int index2)
 {
     std::string str1 = std::to_string(index1);
@@ -144,31 +143,66 @@ bool neighbour_indeces(int index1, int index2)
     return true;
 }
 
-void split_image(cv::Mat image, double stddev)
+void split_image(cv::Mat image, double stddev, int current_index)
 {
     const auto width = image.cols;
     const auto height = image.rows;
+
     if (image.empty())
         return; 
-
+    
     cv::Mat mean;
     cv::Mat dev;
     cv::meanStdDev(image, mean, dev);
 
-    if (dev.at<double>(0) <= stddev)
+    if (dev.at<double>(0) <= stddev || width < 12 || height < 12)
     {
         image.setTo(mean);
+        gIndeces.push_back(current_index);
         return;
     }
 
-    split_image(image(cv::Range(0, height / 2), cv::Range(0, width / 2)), stddev);
-    split_image(image(cv::Range(0, height / 2), cv::Range(width / 2, width)), stddev);
-    split_image(image(cv::Range(height / 2, height), cv::Range(width / 2, width)), stddev);
-    split_image(image(cv::Range(height / 2, height), cv::Range(0, width / 2)), stddev);
+    split_image(image(cv::Range(0, height / 2), cv::Range(0, width / 2)), stddev, 10 * current_index + 1);
+    split_image(image(cv::Range(0, height / 2), cv::Range(width / 2, width)), stddev, 10 * current_index + 2);
+    split_image(image(cv::Range(height / 2, height), cv::Range(width / 2, width)), stddev, 10 * current_index + 4);
+    split_image(image(cv::Range(height / 2, height), cv::Range(0, width / 2)), stddev, 10 * current_index + 3);
 }
 
+void set_to_by_index(cv::Mat image, int index, cv::Mat color)
+{
+    const auto width = image.cols;
+    const auto height = image.rows;
 
-void merge_image(cv::Mat image, double stddev)
+    std::string str = std::to_string(index);
+
+    int w = int(double(width) / pow(2, int(strlen(str.c_str()))));
+    int h = int(double(height) / pow(2, int(strlen(str.c_str()))));
+
+    int x = 0;
+    int y = 0;
+    int step_w = width / 2;
+    int step_h = height / 2;
+
+    for (std::string::size_type i = 0; i < str.size(); i++)
+    {
+        int sym = static_cast<int>(str.c_str()[i]);
+        if (sym == 2)
+            x += step_w;
+        else if (sym == 3)
+            y += step_h;
+        else if (sym == 4)
+        {
+            x += step_w;
+            y += step_h;
+        }
+        step_w /= 2;
+        step_h /= 2;
+    }
+    image(cv::Range(y, y + h), cv::Range(x, x + w)).setTo(color);
+}
+
+//Old function is not being used now, Don't check it - wasting time..........
+void old_merge_image(cv::Mat image, double stddev)
 {
     const auto width = image.cols;
     const auto height = image.rows;
@@ -244,11 +278,68 @@ void merge_image(cv::Mat image, double stddev)
         }
     }
     
-    if (!q1) merge_image(quarter1, stddev);
-    if (!q2) merge_image(quarter2, stddev);
-    if (!q3) merge_image(quarter3, stddev); 
-    if (!q4) merge_image(quarter4, stddev);
+    if (!q1)
+        old_merge_image(quarter1, stddev);
+    if (!q2)
+        old_merge_image(quarter2, stddev);
+    if (!q3)
+        old_merge_image(quarter3, stddev); 
+    if (!q4)
+        old_merge_image(quarter4, stddev);
 }
+
+void merge_image(cv::Mat image, double stddev)
+{
+    for (int i = 0; i < gIndeces.size(); i++)
+    {
+        for (int j = i; j < gIndeces.size(); j++)
+        {
+            int idx_i = gIndeces.at(i);
+            int idx_j = gIndeces.at(j);
+            if (neighbour_indeces(idx_i, idx_j))
+            {
+                cv::Mat mean_i, mean_j, mean_ij;
+                cv::Mat dev_i, dev_j, dev_ij;
+                cv::Mat area_i, area_j, area_ij;
+               
+                area_by_index(idx_i, image, area_i);
+                area_by_index(idx_j, image, area_j);
+
+                //std::cout << area_i.isContinuous() << std::endl;
+                //std::cout << area_i.clone().isContinuous() << std::endl;
+                cv::Mat a = area_i.clone();
+                //std::cout << a.isContinuous() << std::endl;
+                //std::cout << a.clone().isContinuous() << std::endl;
+                cv::Mat b;
+                //std::cout << area_i.cols << " x " << area_i.rows << std::endl;
+                //cv::resize(area_i, b, cv::Size(area_i.size[1], area_i.size[2]));
+                //std::cout << b.clone().isContinuous() << std::endl;
+
+                //std::cout << area_i.clone().reshape(0, 1).size() << std::endl;
+                //std::cout << area_j.clone().reshape(0, 1).size() << std::endl;
+                //if (!area_i.empty() && !area_j.empty())
+                //{
+                cv::hconcat(area_i.clone().reshape(0, 1), area_j.clone().reshape(0, 1), area_ij);
+
+                cv::meanStdDev(area_i, mean_i, dev_i);
+                cv::meanStdDev(area_j, mean_j, dev_j);
+                cv::meanStdDev(area_ij, mean_ij, dev_ij);
+
+                if (dev_i.at<double>(0) <= stddev && dev_j.at<double>(0) <= stddev && dev_ij.at<double>(0) <= stddev)
+                {
+                    if (abs(mean_i.at<double>(0) - mean_j.at<double>(0)) <= 10)
+                    {
+                        set_to_by_index(image, idx_i, mean_ij);
+                        set_to_by_index(image, idx_j, mean_ij);
+                    }
+                }
+                //}
+
+            }
+        }
+    }
+}
+
 } // namespace
 
 namespace cvlib
@@ -257,10 +348,14 @@ cv::Mat split_and_merge(const cv::Mat& image, double stddev)
 {
     // split part
     cv::Mat res = image;
-    split_image(res, stddev);
+    split_image(res, stddev, 0);
 
     // merge part
     merge_image(res, stddev);
+    //std::cout << image.size() << std::endl;
+    //cv::Mat shougodno = image.reshape(0, 1);
+    //std::cout << shougodno.size() << std::endl;
+
     return res;
 }
 } // namespace cvlib
